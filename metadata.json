@@ -1,0 +1,6 @@
+{
+  "name": "Ubaid",
+  "description": "High-reliability host application for peer-to-peer remote access and control with screen mirroring, accessibility gestures, and live telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

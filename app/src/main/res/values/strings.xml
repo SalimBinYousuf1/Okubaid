@@ -1,0 +1,52 @@
+<resources>
+    <string name="app_name">Ubaid</string>
+    <string name="app_tagline">Host Phone Remote Access &amp; Control</string>
+    <string name="accessibility_service_description">Enables Ubaid to receive remote touch, gesture, and navigation commands dispatched from your authorized controller device (Salim).</string>
+    
+    <!-- Setup Wizard Strings -->
+    <string name="setup_title">Host Setup</string>
+    <string name="setup_subtitle">Complete the required system permissions to enable peer-to-peer remote access.</string>
+    <string name="step_media_projection_title">Screen Mirroring</string>
+    <string name="step_media_projection_desc">Required to stream your screen video in real time to your controller. Android requires explicit consent before capturing.</string>
+    <string name="step_accessibility_title">Remote Touch &amp; Gestures</string>
+    <string name="step_accessibility_desc">Required to simulate taps, swipes, back, home, and recents gestures sent by your controller.</string>
+    <string name="step_notification_title">Live Notifications</string>
+    <string name="step_notification_desc">Required to forward incoming notifications from this phone to your controller device in real time.</string>
+    <string name="step_storage_title">File Access</string>
+    <string name="step_storage_desc">Required to allow your controller device to browse, download, and transfer files remotely.</string>
+    <string name="step_battery_title">Background Reliability</string>
+    <string name="step_battery_desc">Required to keep Ubaid running continuously when the screen is off or in standby without OEM battery killer interruptions.</string>
+    <string name="step_pairing_title">Pairing with Controller</string>
+    <string name="step_pairing_desc">Scan this QR code with Salim (Controller app) once. After initial pairing, reconnection happens automatically.</string>
+
+    <!-- Buttons & Actions -->
+    <string name="grant_permission">Grant Permission</string>
+    <string name="open_settings">Open Settings</string>
+    <string name="recheck_status">Re-check Status</string>
+    <string name="next_step">Next Step</string>
+    <string name="back">Back</string>
+    <string name="finish_setup">Finish Setup</string>
+    <string name="start_service">Start Broadcast</string>
+    <string name="stop_service">Stop Broadcast</string>
+    <string name="show_pairing_qr">Show Pairing QR</string>
+    <string name="copy_pairing_id">Copy Pairing ID</string>
+    <string name="copy_json_config">Copy JSON Config</string>
+    <string name="diagnostics">Diagnostics</string>
+    <string name="retry">Retry</string>
+    <string name="close">Close</string>
+
+    <!-- Statuses -->
+    <string name="status_connected">Connected &amp; Streaming</string>
+    <string name="status_waiting">Waiting for Controller</string>
+    <string name="status_reconnecting">Reconnecting (ICE)</string>
+    <string name="status_standby">Standby (Idle)</string>
+    <string name="status_action_required">Action Required</string>
+    <string name="status_granted">Granted</string>
+    <string name="status_missing">Missing</string>
+
+    <!-- Notification Service -->
+    <string name="notification_channel_name">Ubaid Host Service</string>
+    <string name="notification_channel_desc">Active screen mirroring and remote control session</string>
+    <string name="notification_title">Ubaid Host Active</string>
+    <string name="notification_content">Ready for secure remote connection from Salim.</string>
+</resources>
