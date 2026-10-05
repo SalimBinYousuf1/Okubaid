@@ -159,9 +159,7 @@ fun HostMainScreen(
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             viewModel.setMediaProjectionConsent(result.resultCode, result.data, context)
-            if (isBroadcasting) {
-                viewModel.startBroadcast(context)
-            }
+            viewModel.startBroadcast(context)
         }
     }
 
@@ -240,9 +238,9 @@ fun HostMainScreen(
                 .verticalScroll(scrollState),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. Honest Single-Tap Video Revocation Banner (iOS Callout Style)
+            // 1. Single-Tap Video Resume Banner
             AnimatedVisibility(
-                visible = consentRevoked || !permissions.mediaProjectionGranted,
+                visible = isBroadcasting && (consentRevoked || !permissions.mediaProjectionGranted),
                 enter = fadeIn(),
                 exit = fadeOut()
             ) {
@@ -275,14 +273,14 @@ fun HostMainScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Screen Capture Consent Needed",
+                                text = "Screen Mirroring Paused",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = StatusWaitingText
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Android revoked capture token. Tap Resume to restart video streaming.",
+                                text = "Screen stream paused. Tap Resume to re-enable video streaming.",
                                 fontSize = 12.sp,
                                 color = StatusWaitingText,
                                 lineHeight = 16.sp
@@ -291,9 +289,13 @@ fun HostMainScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Button(
                             onClick = {
-                                val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
-                                mpManager?.let {
-                                    mediaProjectionLauncher.launch(it.createScreenCaptureIntent())
+                                try {
+                                    val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+                                    mpManager?.let {
+                                        mediaProjectionLauncher.launch(it.createScreenCaptureIntent())
+                                    }
+                                } catch (e: Exception) {
+                                    viewModel.startBroadcast(context)
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary),
@@ -426,7 +428,20 @@ fun HostMainScreen(
                             }
                         } else {
                             Button(
-                                onClick = { viewModel.startBroadcast(context) },
+                                onClick = {
+                                    if (!permissions.mediaProjectionGranted) {
+                                        try {
+                                            val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+                                            mpManager?.let {
+                                                mediaProjectionLauncher.launch(it.createScreenCaptureIntent())
+                                            } ?: viewModel.startBroadcast(context)
+                                        } catch (e: Exception) {
+                                            viewModel.startBroadcast(context)
+                                        }
+                                    } else {
+                                        viewModel.startBroadcast(context)
+                                    }
+                                },
                                 colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary),
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier

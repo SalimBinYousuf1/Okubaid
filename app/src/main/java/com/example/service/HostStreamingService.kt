@@ -76,6 +76,10 @@ class HostStreamingService : Service() {
     private var telemetryJob: Job? = null
     private var notificationForwardingJob: Job? = null
 
+    private val pendingRemoteCandidates = mutableListOf<IceCandidate>()
+    @Volatile
+    private var isRemoteDescriptionSet = false
+
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "HostStreamingService onCreate")
@@ -183,7 +187,15 @@ class HostStreamingService : Service() {
             }
 
             signaling.onRemoteIceCandidateReceived = { sdpMid, sdpMLineIndex, candidate ->
-                peerConnection?.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
+                val iceCandidate = IceCandidate(sdpMid, sdpMLineIndex, candidate)
+                synchronized(pendingRemoteCandidates) {
+                    if (isRemoteDescriptionSet && peerConnection != null) {
+                        peerConnection?.addIceCandidate(iceCandidate)
+                    } else {
+                        pendingRemoteCandidates.add(iceCandidate)
+                        Log.d(TAG, "Queued early remote ICE candidate ($sdpMid)")
+                    }
+                }
             }
 
             signaling.startSignalingMailbox(pairingId)
@@ -227,14 +239,26 @@ class HostStreamingService : Service() {
     private fun createPeerConnection() {
         CrashProtector.safeRun(TAG, Unit) {
             val factory = peerConnectionFactory ?: return@safeRun
+            synchronized(pendingRemoteCandidates) {
+                pendingRemoteCandidates.clear()
+                isRemoteDescriptionSet = false
+            }
+
             val iceServers = listOf(
                 PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-                PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer()
+                PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+                PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer(),
+                PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer(),
+                PeerConnection.IceServer.builder("stun:stun.services.mozilla.com:3478").createIceServer()
             )
 
             val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
                 continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+                bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+                rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+                tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
+                iceTransportsType = PeerConnection.IceTransportsType.ALL
             }
 
             peerConnection = factory.createPeerConnection(rtcConfig, object : PeerConnection.Observer {
@@ -296,6 +320,12 @@ class HostStreamingService : Service() {
 
                 override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out org.webrtc.MediaStream>?) {}
             })
+
+            // Re-attach video track if already initialized
+            videoTrack?.let { track ->
+                peerConnection?.addTrack(track, listOf("host_stream"))
+                Log.d(TAG, "Attached existing videoTrack to fresh PeerConnection")
+            }
 
             // Host pre-creates DataChannels so they are ready as soon as connected
             setupDataChannels()
@@ -361,14 +391,27 @@ class HostStreamingService : Service() {
 
     private fun setupScreenCapture(width: Int, height: Int) {
         CrashProtector.safeRun(TAG, Unit) {
-            val resultCode = MediaProjectionHolder.resultCode
-            val resultData = MediaProjectionHolder.resultData
+            // Guard: If screen capturer is already initialized and active, do not recreate
+            if (screenCapturer != null) {
+                Log.d(TAG, "Screen capturer is already active, reusing existing capturer.")
+                return@safeRun
+            }
+
+            val (resultCode, resultData) = MediaProjectionHolder.consumeIntent()
 
             if (resultCode != 0 && resultData != null) {
                 // Ensure foreground service is registered with mediaProjection type before obtaining token
                 startForegroundWithNotification("Ubaid Host Active", "Streaming screen to Salim")
 
                 try {
+                    // Clean up any stale video pipeline objects before allocating new
+                    videoTrack?.dispose()
+                    videoTrack = null
+                    videoSource?.dispose()
+                    videoSource = null
+                    surfaceTextureHelper?.dispose()
+                    surfaceTextureHelper = null
+
                     // In Android 14+, ScreenCapturerAndroid consumes resultData to create the single MediaProjection instance.
                     // Never call getMediaProjection beforehand with the same resultData.
                     screenCapturer = ScreenCapturerAndroid(resultData, object : MediaProjection.Callback() {
@@ -395,16 +438,16 @@ class HostStreamingService : Service() {
                     videoTrack?.setEnabled(true)
                     peerConnection?.addTrack(videoTrack, listOf("host_stream"))
                     Log.d(TAG, "Screen capturer initialized and track added: ${scaledWidth}x$scaledHeight @ 30fps")
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     Log.e(TAG, "Screen capturer initialization error: ${e.message}", e)
                     MediaProjectionHolder.markRevoked()
                     try {
                         screenCapturer?.dispose()
-                    } catch (_: Exception) {}
+                    } catch (_: Throwable) {}
                     screenCapturer = null
                 }
             } else {
-                Log.w(TAG, "MediaProjection consent not yet available; streaming data channels only.")
+                Log.d(TAG, "No fresh MediaProjection consent token available; streaming data channels only.")
             }
         }
     }
@@ -415,8 +458,19 @@ class HostStreamingService : Service() {
         pc.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {}
             override fun onSetSuccess() {
-                Log.d(TAG, "Remote description set successfully. Creating answer...")
-                val constraints = MediaConstraints()
+                Log.d(TAG, "Remote description set successfully. Draining queued candidates...")
+                synchronized(pendingRemoteCandidates) {
+                    isRemoteDescriptionSet = true
+                    for (cand in pendingRemoteCandidates) {
+                        pc.addIceCandidate(cand)
+                    }
+                    pendingRemoteCandidates.clear()
+                }
+
+                val constraints = MediaConstraints().apply {
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "false"))
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "false"))
+                }
                 pc.createAnswer(object : SdpObserver {
                     override fun onCreateSuccess(answerDesc: SessionDescription?) {
                         if (answerDesc != null) {

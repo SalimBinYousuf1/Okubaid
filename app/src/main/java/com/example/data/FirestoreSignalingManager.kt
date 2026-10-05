@@ -37,6 +37,7 @@ class FirestoreSignalingManager(private val context: Context) {
     private var sessionListener: ListenerRegistration? = null
     private var offerListener: ListenerRegistration? = null
     private var candidateListener: ListenerRegistration? = null
+    private var lastProcessedOfferSdp: String? = null
 
     // Callback invoked when a remote offer arrives from Salim
     var onRemoteOfferReceived: ((sdp: String) -> Unit)? = null
@@ -145,11 +146,12 @@ class FirestoreSignalingManager(private val context: Context) {
         }
 
         _connectionState.value = ConnectionState.WAITING_FOR_CONTROLLER
+        lastProcessedOfferSdp = null
 
         CrashProtector.safeRun(TAG, Unit) {
             val sessionDoc = db.collection("sessions").document(pairingId)
 
-            // Reset or create session document with host waiting status
+            // Reset or create session document with host waiting status and clear stale answer
             sessionDoc.set(
                 hashMapOf(
                     "hostStatus" to "WAITING",
@@ -157,6 +159,7 @@ class FirestoreSignalingManager(private val context: Context) {
                 ),
                 SetOptions.merge()
             )
+            sessionDoc.collection("signaling").document("answer").delete()
 
             // Listen for remote offer from Salim
             offerListener?.remove()
@@ -169,8 +172,9 @@ class FirestoreSignalingManager(private val context: Context) {
                     if (snapshot != null && snapshot.exists()) {
                         val sdp = snapshot.getString("sdp")
                         val type = snapshot.getString("type")
-                        if (!sdp.isNullOrBlank() && type == "offer") {
-                            Log.d(TAG, "Received WebRTC offer from Salim!")
+                        if (!sdp.isNullOrBlank() && type == "offer" && sdp != lastProcessedOfferSdp) {
+                            lastProcessedOfferSdp = sdp
+                            Log.d(TAG, "Received fresh WebRTC offer from Salim!")
                             _connectionState.value = ConnectionState.CONNECTING
                             onRemoteOfferReceived?.invoke(sdp)
                         }

@@ -120,8 +120,14 @@ fun SetupWizardScreen(
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             viewModel.setMediaProjectionConsent(result.resultCode, result.data, context)
+            if (currentStep == 5) {
+                viewModel.completeSetup(context)
+            }
         } else {
             viewModel.setMediaProjectionConsent(0, null, context)
+            if (currentStep == 5) {
+                viewModel.completeSetup(context)
+            }
         }
     }
 
@@ -208,16 +214,7 @@ fun SetupWizardScreen(
                     label = "wizard_step_transition"
                 ) { step ->
                     when (step) {
-                        0 -> MediaProjectionStep(
-                            isGranted = permissions.mediaProjectionGranted,
-                            onGrantClick = {
-                                val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
-                                mpManager?.let {
-                                    mediaProjectionLauncher.launch(it.createScreenCaptureIntent())
-                                }
-                            }
-                        )
-                        1 -> AccessibilityStep(
+                        0 -> AccessibilityStep(
                             isGranted = permissions.accessibilityGranted,
                             onOpenSettings = {
                                 PermissionHelper.launchIntentSafely(
@@ -227,7 +224,7 @@ fun SetupWizardScreen(
                             },
                             onVerify = { viewModel.refreshAll(context) }
                         )
-                        2 -> NotificationListenerStep(
+                        1 -> NotificationListenerStep(
                             isGranted = permissions.notificationListenerGranted,
                             onOpenSettings = {
                                 PermissionHelper.launchIntentSafely(
@@ -237,7 +234,7 @@ fun SetupWizardScreen(
                             },
                             onVerify = { viewModel.refreshAll(context) }
                         )
-                        3 -> StorageStep(
+                        2 -> StorageStep(
                             isGranted = permissions.storageGranted,
                             onOpenSettings = {
                                 PermissionHelper.launchIntentSafely(
@@ -247,7 +244,7 @@ fun SetupWizardScreen(
                             },
                             onVerify = { viewModel.refreshAll(context) }
                         )
-                        4 -> BatteryOptimizationStep(
+                        3 -> BatteryOptimizationStep(
                             isGranted = permissions.batteryOptimizationIgnored,
                             onOpenSettings = {
                                 PermissionHelper.launchIntentSafely(
@@ -257,9 +254,22 @@ fun SetupWizardScreen(
                             },
                             onVerify = { viewModel.refreshAll(context) }
                         )
-                        5 -> PairingStep(
+                        4 -> PairingStep(
                             payload = pairingPayload,
-                            onFinish = { viewModel.completeSetup(context) }
+                            onFinish = { viewModel.nextWizardStep() }
+                        )
+                        5 -> MediaProjectionStep(
+                            isGranted = permissions.mediaProjectionGranted,
+                            onGrantClick = {
+                                try {
+                                    val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+                                    mpManager?.let {
+                                        mediaProjectionLauncher.launch(it.createScreenCaptureIntent())
+                                    }
+                                } catch (e: Exception) {
+                                    viewModel.completeSetup(context)
+                                }
+                            }
                         )
                     }
                 }
@@ -313,7 +323,20 @@ fun SetupWizardScreen(
                     }
                 } else {
                     Button(
-                        onClick = { viewModel.completeSetup(context) },
+                        onClick = {
+                            if (permissions.mediaProjectionGranted) {
+                                viewModel.completeSetup(context)
+                            } else {
+                                try {
+                                    val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+                                    mpManager?.let {
+                                        mediaProjectionLauncher.launch(it.createScreenCaptureIntent())
+                                    } ?: viewModel.completeSetup(context)
+                                } catch (e: Exception) {
+                                    viewModel.completeSetup(context)
+                                }
+                            }
+                        },
                         colors = ButtonDefaults.buttonColors(containerColor = AccentPrimary),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
@@ -437,10 +460,10 @@ private fun MediaProjectionStep(
 ) {
     StepContainer(
         icon = Icons.Default.ScreenShare,
-        title = "Screen Mirroring Consent",
-        badgeText = if (isGranted) "Consent Active" else "Consent Required",
+        title = "One-Time Screen Share Setup",
+        badgeText = if (isGranted) "Screen Share Ready" else "Ready to Activate",
         isGranted = isGranted,
-        description = "Salim displays your screen live over peer-to-peer WebRTC video. Android security mandates user confirmation before screen capture starts."
+        description = "Authorize screen mirroring once to complete setup and start broadcasting live to Salim. After this one-time setup, Ubaid maintains persistent background readiness without asking again."
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),

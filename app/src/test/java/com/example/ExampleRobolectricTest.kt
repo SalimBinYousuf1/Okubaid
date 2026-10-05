@@ -201,4 +201,22 @@ class ExampleRobolectricTest {
         val id2 = prefs.pairingId
         assertEquals(id1, id2) // verify persistent same ID
     }
+
+    @Test
+    fun `media projection holder consumeIntent is single use`() {
+        val intent = android.content.Intent("android.intent.action.MAIN")
+        com.example.service.MediaProjectionHolder.setConsent(-1, intent)
+        assertTrue(com.example.service.MediaProjectionHolder.hasValidConsent.value)
+
+        val (code1, intent1) = com.example.service.MediaProjectionHolder.consumeIntent()
+        assertEquals(-1, code1)
+        assertNotNull(intent1)
+
+        // Second consumption should have null intent to prevent token re-use
+        val (code2, intent2) = com.example.service.MediaProjectionHolder.consumeIntent()
+        assertEquals(-1, code2)
+        org.junit.Assert.assertNull(intent2)
+        // hasValidConsent remains true while active
+        assertTrue(com.example.service.MediaProjectionHolder.hasValidConsent.value)
+    }
 }
