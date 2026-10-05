@@ -2,6 +2,7 @@ package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.HostPreferences
 import com.example.model.ConnectionState
 import com.example.model.ControlCommand
 import com.example.model.FileItem
@@ -9,6 +10,7 @@ import com.example.model.NotificationPayload
 import com.example.model.PairingPayload
 import com.example.model.PermissionsState
 import com.example.util.CrashProtector
+import com.example.util.FileChannelHandler
 import com.example.util.PermissionHelper
 import com.example.util.QRCodeGenerator
 import com.example.util.SystemTelemetryHelper
@@ -168,5 +170,35 @@ class ExampleRobolectricTest {
             throw RuntimeException("Simulated error")
         }
         assertEquals("FALLBACK", result)
+    }
+
+    @Test
+    fun `file channel handler handles list command`() {
+        var responseReceived = ""
+        FileChannelHandler.handleFileCommand("""{"action":"list","path":"/"}""") { resp ->
+            responseReceived = resp
+        }
+        assertTrue(responseReceived.contains("file_list_response"))
+    }
+
+    @Test
+    fun `file channel handler handles invalid file read gracefully`() {
+        var responseReceived = ""
+        FileChannelHandler.handleFileCommand("""{"action":"read","path":"/non_existent_folder/missing.txt"}""") { resp ->
+            responseReceived = resp
+        }
+        assertTrue(responseReceived.contains("file_error"))
+    }
+
+    @Test
+    fun `host preferences persistence`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = HostPreferences.getInstance(context)
+        val id1 = prefs.pairingId
+        assertNotNull(id1)
+        assertTrue(id1.startsWith("UBAID-"))
+
+        val id2 = prefs.pairingId
+        assertEquals(id1, id2) // verify persistent same ID
     }
 }

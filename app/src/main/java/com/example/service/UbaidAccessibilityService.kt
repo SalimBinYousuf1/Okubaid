@@ -129,7 +129,9 @@ class UbaidAccessibilityService : AccessibilityService() {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
         val result = focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-        focusedNode.recycle()
+        if (focusedNode != rootNode) {
+            focusedNode.recycle()
+        }
         rootNode.recycle()
         return result
     }

@@ -73,7 +73,6 @@ class HostStreamingService : Service() {
     private var notificationChannel: DataChannel? = null
     private var statusChannel: DataChannel? = null
 
-    private var mediaProjection: MediaProjection? = null
     private var telemetryJob: Job? = null
     private var notificationForwardingJob: Job? = null
 
@@ -130,12 +129,20 @@ class HostStreamingService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             var serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                 if (MediaProjectionHolder.hasValidConsent.value) {
                     serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                 }
             }
-            startForeground(NOTIFICATION_ID, notification, serviceType)
+            try {
+                startForeground(NOTIFICATION_ID, notification, serviceType)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to startForeground with type $serviceType: ${e.message}", e)
+                try {
+                    startForeground(NOTIFICATION_ID, notification)
+                } catch (e2: Exception) {
+                    Log.e(TAG, "Fallback startForeground failed: ${e2.message}", e2)
+                }
+            }
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -160,11 +167,15 @@ class HostStreamingService : Service() {
             )
             signaling.publishHostProfile(payload)
 
-            // Setup WebRTC Native Stack
-            initWebRtc()
+            // Setup WebRTC Native Stack if not yet initialized
+            if (peerConnectionFactory == null) {
+                initWebRtc()
+            }
 
-            // Setup Screen Capturer if MediaProjection consent is available
-            setupScreenCapture(screenInfo.width, screenInfo.height)
+            // Setup Screen Capturer if MediaProjection consent is available and capturer not yet created
+            if (screenCapturer == null) {
+                setupScreenCapture(screenInfo.width, screenInfo.height)
+            }
 
             // Start listening to signaling offers from Salim
             signaling.onRemoteOfferReceived = { sdpOffer ->
@@ -185,7 +196,12 @@ class HostStreamingService : Service() {
 
     private fun initWebRtc() {
         CrashProtector.safeRun(TAG, Unit) {
-            eglBase = EglBase.create()
+            eglBase = try {
+                EglBase.create(null, EglBase.CONFIG_RECORDABLE)
+            } catch (e: Exception) {
+                Log.w(TAG, "CONFIG_RECORDABLE fallback: ${e.message}")
+                EglBase.create()
+            }
             PeerConnectionFactory.initialize(
                 PeerConnectionFactory.InitializationOptions.builder(this)
                     .setEnableInternalTracer(false)
@@ -351,9 +367,11 @@ class HostStreamingService : Service() {
             if (resultCode != 0 && resultData != null) {
                 // Ensure foreground service is registered with mediaProjection type before obtaining token
                 startForegroundWithNotification("Ubaid Host Active", "Streaming screen to Salim")
-                val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
-                mediaProjection = mpManager?.getMediaProjection(resultCode, resultData)?.also { mp ->
-                    mp.registerCallback(object : MediaProjection.Callback() {
+
+                try {
+                    // In Android 14+, ScreenCapturerAndroid consumes resultData to create the single MediaProjection instance.
+                    // Never call getMediaProjection beforehand with the same resultData.
+                    screenCapturer = ScreenCapturerAndroid(resultData, object : MediaProjection.Callback() {
                         override fun onStop() {
                             super.onStop()
                             Log.w(TAG, "MediaProjection stopped by system")
@@ -363,28 +381,28 @@ class HostStreamingService : Service() {
                                 "Screen capture revoked by Android. Tap to resume."
                             )
                         }
-                    }, null)
+                    })
+
+                    surfaceTextureHelper = SurfaceTextureHelper.create("ScreenCaptureThread", eglBase?.eglBaseContext)
+                    videoSource = peerConnectionFactory?.createVideoSource(screenCapturer?.isScreencast == true)
+                    screenCapturer?.initialize(surfaceTextureHelper, this, videoSource?.capturerObserver)
+
+                    val scaledWidth = (((width / 2).coerceAtLeast(480)) / 2) * 2
+                    val scaledHeight = (((height / 2).coerceAtLeast(800)) / 2) * 2
+                    screenCapturer?.startCapture(scaledWidth, scaledHeight, 30)
+
+                    videoTrack = peerConnectionFactory?.createVideoTrack("host_screen_video", videoSource)
+                    videoTrack?.setEnabled(true)
+                    peerConnection?.addTrack(videoTrack, listOf("host_stream"))
+                    Log.d(TAG, "Screen capturer initialized and track added: ${scaledWidth}x$scaledHeight @ 30fps")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Screen capturer initialization error: ${e.message}", e)
+                    MediaProjectionHolder.markRevoked()
+                    try {
+                        screenCapturer?.dispose()
+                    } catch (_: Exception) {}
+                    screenCapturer = null
                 }
-
-                screenCapturer = ScreenCapturerAndroid(resultData, object : MediaProjection.Callback() {
-                    override fun onStop() {
-                        super.onStop()
-                        MediaProjectionHolder.markRevoked()
-                    }
-                })
-
-                surfaceTextureHelper = SurfaceTextureHelper.create("ScreenCaptureThread", eglBase?.eglBaseContext)
-                videoSource = peerConnectionFactory?.createVideoSource(screenCapturer?.isScreencast == true)
-                screenCapturer?.initialize(surfaceTextureHelper, this, videoSource?.capturerObserver)
-
-                val scaledWidth = (width / 2).coerceAtLeast(480)
-                val scaledHeight = (height / 2).coerceAtLeast(800)
-                screenCapturer?.startCapture(scaledWidth, scaledHeight, 30)
-
-                videoTrack = peerConnectionFactory?.createVideoTrack("host_screen_video", videoSource)
-                videoTrack?.setEnabled(true)
-                peerConnection?.addTrack(videoTrack, listOf("host_stream"))
-                Log.d(TAG, "Screen capturer initialized and track added: ${scaledWidth}x$scaledHeight @ 30fps")
             } else {
                 Log.w(TAG, "MediaProjection consent not yet available; streaming data channels only.")
             }
@@ -516,9 +534,6 @@ class HostStreamingService : Service() {
 
             eglBase?.release()
             eglBase = null
-
-            mediaProjection?.stop()
-            mediaProjection = null
 
             signalingManager?.stopSignaling()
         }
